@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>苹果开发图标转换器 - Icon Converter</title>
+    <!-- 添加 jsPDF 库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -345,15 +347,12 @@
                     <div class="format-title">PNG 格式</div>
                     <div class="format-description">适用于 iOS 应用图标，支持透明背景</div>
                     <div class="size-options">
-                        <span class="size-tag">20x20</span>
-                        <span class="size-tag">29x29</span>
-                        <span class="size-tag">40x40</span>
-                        <span class="size-tag">58x58</span>
-                        <span class="size-tag">60x60</span>
-                        <span class="size-tag">80x80</span>
-                        <span class="size-tag">87x87</span>
-                        <span class="size-tag">120x120</span>
-                        <span class="size-tag">180x180</span>
+                        <span class="size-tag">16x16</span>
+                        <span class="size-tag">32x32</span>
+                        <span class="size-tag">64x64</span>
+                        <span class="size-tag">128x128</span>
+                        <span class="size-tag">256x256</span>
+                        <span class="size-tag">512x512</span>
                         <span class="size-tag">1024x1024</span>
                     </div>
                 </div>
@@ -372,7 +371,7 @@
             <div class="controls">
                 <div>
                     <label>
-                        <input type="checkbox" id="generateAllSizes"> 生成所有 iOS 尺寸
+                        <input type="checkbox" id="generateAllSizes"> 生成所有标准尺寸
                     </label>
                 </div>
                 <div>
@@ -412,17 +411,12 @@
 
         // iOS 图标尺寸
         const iosSizes = [
-            { size: '20x20', scale: 1 },
-            { size: '20x20', scale: 2 },
-            { size: '20x20', scale: 3 },
-            { size: '29x29', scale: 1 },
-            { size: '29x29', scale: 2 },
-            { size: '29x29', scale: 3 },
-            { size: '40x40', scale: 1 },
-            { size: '40x40', scale: 2 },
-            { size: '40x40', scale: 3 },
-            { size: '60x60', scale: 2 },
-            { size: '60x60', scale: 3 },
+            { size: '16x16', scale: 1 },
+            { size: '32x32', scale: 1 },
+            { size: '64x64', scale: 1 },
+            { size: '128x128', scale: 1 },
+            { size: '256x256', scale: 1 },
+            { size: '512x512', scale: 1 },
             { size: '1024x1024', scale: 1 }
         ];
 
@@ -483,8 +477,8 @@
         function processFiles(files) {
             const validFiles = files.filter(file => 
                 file.type === 'image/svg+xml' || 
-                file.name.toLowerCase().endsWith('.svg') ||
                 file.type === 'image/png' ||
+                file.name.toLowerCase().endsWith('.svg') ||
                 file.name.toLowerCase().endsWith('.png')
             );
 
@@ -523,6 +517,7 @@
             updateFileList();
             downloadSection.style.display = 'none';
             progressBar.style.display = 'none';
+            fileInput.value = ''; // 重置文件输入框
         }
 
         async function convertFiles() {
@@ -547,17 +542,35 @@
                 statusElement.className = 'file-status status-converting';
 
                 try {
-                    // 判断文件类型
-                    const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
-                    const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+                    const fileContent = await readFileAsText(file);
                     
-                    if (isPng) {
-                        // PNG文件处理
-                        await processPngFile(file, i);
-                    } else if (isSvg) {
-                        // SVG文件处理
-                        const svgContent = await readFileAsText(file);
-                        await processSvgFile(svgContent, file, i);
+                    if (generateAllSizes.checked && selectedFormat === 'png') {
+                        // 生成所有标准尺寸
+                        for (const sizeInfo of iosSizes) {
+                            const [width, height] = sizeInfo.size.split('x').map(Number);
+                            // 对于原始PNG文件，如果需要调整大小，则进行转换，否则直接使用原始文件（如果尺寸匹配）
+                            // 这里简化为所有都进行转换，以确保尺寸正确
+                            const convertedBlob = await convertSvgToPng(file.type === 'image/png' ? await createSvgFromPng(file) : fileContent, width, height);
+                            const fileName = `${file.name.replace(/\.(svg|xml|png)$/i, '')}_${width}x${height}.png`;
+                            convertedFiles.push({ blob: convertedBlob, name: fileName });
+                        }
+                    } else if (selectedFormat === 'png' && file.type === 'image/png') {
+                        // 单一格式转换，且原始文件是PNG，直接加入
+                        convertedFiles.push({ blob: file, name: file.name });
+                    } else {
+                        // 单一格式转换 (SVG to PNG or SVG to PDF)
+                        let convertedBlob;
+                        let fileName;
+                        
+                        if (selectedFormat === 'png') {
+                            convertedBlob = await convertSvgToPng(fileContent, 1024, 1024);
+                            fileName = file.name.replace(/\.(svg|xml)$/i, '.png');
+                        } else {
+                            convertedBlob = await convertSvgToPdf(fileContent);
+                            fileName = file.name.replace(/\.(svg|xml)$/i, '.pdf');
+                        }
+                        
+                        convertedFiles.push({ blob: convertedBlob, name: fileName });
                     }
 
                     statusElement.textContent = '已完成';
@@ -565,7 +578,7 @@
                 } catch (error) {
                     console.error('转换失败:', error);
                     statusElement.textContent = '转换失败';
-                    statusElement.className = 'file-status status-converting';
+                    statusElement.className = 'file-status status-converting'; // 保持转换中状态或改为失败状态
                 }
 
                 // 更新进度条
@@ -575,101 +588,28 @@
 
             convertBtn.innerHTML = '开始转换';
             convertBtn.disabled = false;
-            downloadSection.style.display = 'block';
-        }
-
-        // 处理PNG文件
-        async function processPngFile(file, index) {
-            return new Promise((resolve, reject) => {
-                try {
-                    const reader = new FileReader();
-                    reader.onload = async (e) => {
-                        const img = new Image();
-                        img.onload = async () => {
-                            if (generateAllSizes.checked && selectedFormat === 'png') {
-                                // 生成所有 iOS 尺寸
-                                for (const sizeInfo of iosSizes) {
-                                    const [width, height] = sizeInfo.size.split('x').map(Number);
-                                    const actualSize = Math.max(width, height) * sizeInfo.scale;
-                                    const convertedBlob = await resizePngImage(img, actualSize, actualSize);
-                                    const fileName = `${file.name.replace(/\.(png)$/i, '')}_${actualSize}x${actualSize}.png`;
-                                    convertedFiles.push({ blob: convertedBlob, name: fileName });
-                                }
-                            } else {
-                                // 单一格式转换
-                                let convertedBlob;
-                                let fileName;
-                                
-                                if (selectedFormat === 'png') {
-                                    convertedBlob = await resizePngImage(img, 1024, 1024);
-                                    fileName = file.name;
-                                } else {
-                                    // PNG转PDF (实际上是转为PNG)
-                                    convertedBlob = await resizePngImage(img, 1024, 1024);
-                                    fileName = file.name.replace(/\.(png)$/i, '.pdf');
-                                }
-                                
-                                convertedFiles.push({ blob: convertedBlob, name: fileName });
-                            }
-                            resolve();
-                        };
-                        img.onerror = (error) => {
-                            console.error('图像加载错误:', error);
-                            reject(new Error('无法加载图像文件'));
-                        };
-                        img.src = e.target.result;
-                    };
-                    reader.onerror = reject;
-                    reader.readAsDataURL(file);
-                } catch (error) {
-                    console.error('PNG处理错误:', error);
-                    reject(error);
-                }
-            });
-        }
-
-        // 处理SVG文件
-        async function processSvgFile(svgContent, file, index) {
-            if (generateAllSizes.checked && selectedFormat === 'png') {
-                // 生成所有 iOS 尺寸
-                for (const sizeInfo of iosSizes) {
-                    const [width, height] = sizeInfo.size.split('x').map(Number);
-                    const actualSize = Math.max(width, height) * sizeInfo.scale;
-                    const convertedBlob = await convertSvgToPng(svgContent, actualSize, actualSize);
-                    const fileName = `${file.name.replace(/\.(svg)$/i, '')}_${actualSize}x${actualSize}.png`;
-                    convertedFiles.push({ blob: convertedBlob, name: fileName });
-                }
+            if (convertedFiles.length > 0) {
+                downloadSection.style.display = 'block';
             } else {
-                // 单一格式转换
-                let convertedBlob;
-                let fileName;
-                
-                if (selectedFormat === 'png') {
-                    convertedBlob = await convertSvgToPng(svgContent, 1024, 1024);
-                    fileName = file.name.replace(/\.(svg)$/i, '.png');
-                } else {
-                    convertedBlob = await convertSvgToPdf(svgContent);
-                    fileName = file.name.replace(/\.(svg)$/i, '.pdf');
-                }
-                
-                convertedFiles.push({ blob: convertedBlob, name: fileName });
+                downloadSection.style.display = 'none';
             }
         }
 
-        // 调整PNG图像大小
-        function resizePngImage(img, width, height) {
-            return new Promise((resolve) => {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                canvas.width = width;
-                canvas.height = height;
-                
-                // 绘制图像
-                ctx.drawImage(img, 0, 0, width, height);
-                
-                canvas.toBlob(blob => {
-                    resolve(blob);
-                }, 'image/png');
+        //辅助函数：将PNG转为SVG字符串（用于统一处理）
+        async function createSvgFromPng(pngFile) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${img.width}" height="${img.height}"><image href="${event.target.result}" x="0" y="0" width="${img.width}" height="${img.height}"/></svg>`;
+                        resolve(svgString);
+                    }
+                    img.onerror = reject;
+                    img.src = event.target.result;
+                }
+                reader.onerror = reject;
+                reader.readAsDataURL(pngFile);
             });
         }
 
@@ -685,60 +625,115 @@
         function convertSvgToPng(svgContent, width, height) {
             return new Promise((resolve, reject) => {
                 try {
+                    console.log('开始转换 PNG，尺寸:', width, 'x', height);
+                    
                     // 检查是否为 Android Vector Drawable XML
                     let processedSvgContent = svgContent;
                     if (svgContent.includes('<vector') || svgContent.includes('android:')) {
+                        console.log('检测到 Android Vector Drawable，开始转换为 SVG...');
                         processedSvgContent = convertAndroidVectorToSvg(svgContent);
                         if (!processedSvgContent) {
-                            reject(new Error('无法解析 Android Vector Drawable'));
+                            reject(new Error('无法解析 Android Vector Drawable，请检查 XML 格式'));
                             return;
                         }
                     }
 
                     // 确保 SVG 内容格式正确
                     if (!processedSvgContent.includes('<svg')) {
-                        // 如果不是完整的 SVG，尝试包装它
+                        console.log('包装 SVG 片段...');
                         processedSvgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">${processedSvgContent}</svg>`;
                     }
+
+                    console.log('最终 SVG 内容长度:', processedSvgContent.length);
 
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
                     canvas.width = width;
                     canvas.height = height;
 
+                    // 创建 SVG 图像
                     const img = new Image();
-                    const svgBlob = new Blob([processedSvgContent], { type: 'image/svg+xml;charset=utf-8' });
-                    const url = URL.createObjectURL(svgBlob);
-
+                    
+                    // 创建一个测试用的 SVG 来验证浏览器支持
+                    const testSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="red"/></svg>';
+                    
                     img.onload = () => {
-                        // 设置白色背景（可选）
+                        console.log('图像加载成功，开始绘制到 Canvas');
+                        
+                        // 设置白色背景
                         ctx.fillStyle = 'white';
                         ctx.fillRect(0, 0, width, height);
                         
+                        // 绘制图像
                         ctx.drawImage(img, 0, 0, width, height);
                         
+                        // 检查 Canvas 是否有内容
+                        const imageData = ctx.getImageData(0, 0, width, height);
+                        const hasContent = imageData.data.some((value, index) => {
+                            // 检查非白色像素（跳过 alpha 通道）
+                            if (index % 4 === 3) return false; // 跳过 alpha
+                            return value !== 255;
+                        });
+                        
+                        console.log('Canvas 是否有非白色内容:', hasContent);
+                        
                         canvas.toBlob(blob => {
-                            URL.revokeObjectURL(url);
+                            URL.revokeObjectURL(img.src);
+                            if (!blob) {
+                                reject(new Error('Canvas 转换失败'));
+                                return;
+                            }
+                            console.log('PNG 转换完成，文件大小:', blob.size, 'bytes');
                             resolve(blob);
-                        }, 'image/png');
+                        }, 'image/png', 1.0);
                     };
 
                     img.onerror = (error) => {
-                        URL.revokeObjectURL(url);
                         console.error('图像加载错误:', error);
-                        reject(new Error('无法加载图像文件，请检查文件格式是否正确'));
+                        URL.revokeObjectURL(img.src);
+                        
+                        // 尝试使用测试 SVG
+                        console.log('尝试使用测试 SVG...');
+                        const testImg = new Image();
+                        const testBlob = new Blob([testSvg], { type: 'image/svg+xml;charset=utf-8' });
+                        const testUrl = URL.createObjectURL(testBlob);
+                        
+                        testImg.onload = () => {
+                            console.log('测试 SVG 加载成功');
+                            ctx.fillStyle = 'white';
+                            ctx.fillRect(0, 0, width, height);
+                            ctx.drawImage(testImg, 0, 0, width, height);
+                            
+                            canvas.toBlob(blob => {
+                                URL.revokeObjectURL(testUrl);
+                                resolve(blob);
+                            }, 'image/png');
+                        };
+                        
+                        testImg.onerror = () => {
+                            URL.revokeObjectURL(testUrl);
+                            reject(new Error('浏览器不支持 SVG 转换或文件格式有误'));
+                        };
+                        
+                        testImg.src = testUrl;
                     };
 
-                    img.src = url;
+                    // 使用 data URL 方式
+                    const svgDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(processedSvgContent);
+                    console.log('SVG Data URL 长度:', svgDataUrl.length);
+                    img.src = svgDataUrl;
+
                 } catch (error) {
                     console.error('转换过程中出错:', error);
-                    reject(new Error('文件格式不支持或文件已损坏'));
+                    reject(new Error('文件格式不支持或文件已损坏: ' + error.message));
                 }
             });
         }
 
         function convertAndroidVectorToSvg(xmlContent) {
             try {
+                console.log('原始 XML 内容:', xmlContent.substring(0, 200) + '...');
+                
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
                 
@@ -752,6 +747,8 @@
                 const vectorElement = xmlDoc.querySelector('vector');
                 if (!vectorElement) {
                     console.error('未找到 vector 元素');
+                    // 尝试查找是否有其他可用的元素
+                    console.log('XML 文档结构:', xmlDoc.documentElement?.tagName);
                     return null;
                 }
 
@@ -760,6 +757,9 @@
                 const height = vectorElement.getAttribute('android:height') || '24dp';
                 const viewportWidth = vectorElement.getAttribute('android:viewportWidth') || '24';
                 const viewportHeight = vectorElement.getAttribute('android:viewportHeight') || '24';
+                const tint = vectorElement.getAttribute('android:tint') || '';
+
+                console.log(`Vector 属性: ${width}x${height}, viewBox: ${viewportWidth}x${viewportHeight}`);
 
                 // 创建 SVG 根元素
                 let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" 
@@ -767,54 +767,157 @@
                     height="${height.replace('dp', '')}" 
                     viewBox="0 0 ${viewportWidth} ${viewportHeight}">`;
 
-                // 处理 path 元素
-                const paths = xmlDoc.querySelectorAll('path');
-                paths.forEach(path => {
+                // 如果有全局着色，添加一个包裹组
+                if (tint && !tint.includes('@')) {
+                    svgContent += `<g fill="${tint}">`;
+                }
+
+                let hasContent = false;
+
+                // 处理所有 path 元素（包括嵌套的）
+                const paths = vectorElement.querySelectorAll('path');
+                console.log(`找到 ${paths.length} 个 path 元素`);
+                
+                paths.forEach((path, index) => {
                     const pathData = path.getAttribute('android:pathData');
-                    const fillColor = path.getAttribute('android:fillColor') || '#000000';
+                    let fillColor = path.getAttribute('android:fillColor') || '#000000';
                     const strokeColor = path.getAttribute('android:strokeColor');
                     const strokeWidth = path.getAttribute('android:strokeWidth');
+                    const fillAlpha = path.getAttribute('android:fillAlpha') || '1';
+                    const strokeAlpha = path.getAttribute('android:strokeAlpha') || '1';
+
+                    console.log(`Path ${index}: data=${pathData?.substring(0, 50)}..., fill=${fillColor}`);
 
                     if (pathData) {
-                        svgContent += `<path d="${pathData}" fill="${fillColor}"`;
-                        if (strokeColor) {
-                            svgContent += ` stroke="${strokeColor}"`;
+                        // 处理颜色值
+                        if (fillColor.startsWith('#')) {
+                            // 已经是标准颜色格式
+                        } else if (fillColor.includes('@')) {
+                            // Android 资源引用，使用默认黑色
+                            fillColor = tint && !tint.includes('@') ? tint : '#000000';
+                        }
+
+                        svgContent += `<path d="${pathData}" fill="${fillColor}" fill-opacity="${fillAlpha}"`;
+                        if (strokeColor && !strokeColor.includes('@')) {
+                            svgContent += ` stroke="${strokeColor}" stroke-opacity="${strokeAlpha}"`;
                         }
                         if (strokeWidth) {
                             svgContent += ` stroke-width="${strokeWidth}"`;
                         }
                         svgContent += '></path>';
+                        hasContent = true;
                     }
                 });
 
                 // 处理 group 元素
-                const groups = xmlDoc.querySelectorAll('group');
+                const groups = vectorElement.querySelectorAll('group');
+                console.log(`找到 ${groups.length} 个 group 元素`);
+                
                 groups.forEach(group => {
+                    const translateX = group.getAttribute('android:translateX') || '0';
+                    const translateY = group.getAttribute('android:translateY') || '0';
+                    const scaleX = group.getAttribute('android:scaleX') || '1';
+                    const scaleY = group.getAttribute('android:scaleY') || '1';
+                    const rotation = group.getAttribute('android:rotation') || '0';
+                    const pivotX = group.getAttribute('android:pivotX') || '0';
+                    const pivotY = group.getAttribute('android:pivotY') || '0';
+                    
+                    // 构建变换属性
+                    let transform = '';
+                    if (translateX !== '0' || translateY !== '0') {
+                        transform += ` translate(${translateX},${translateY})`;
+                    }
+                    if (rotation !== '0') {
+                        transform += ` rotate(${rotation},${pivotX},${pivotY})`;
+                    }
+                    if (scaleX !== '1' || scaleY !== '1') {
+                        transform += ` scale(${scaleX},${scaleY})`;
+                    }
+                    
+                    svgContent += transform ? `<g transform="${transform.trim()}">` : '<g>';
+                    
                     const groupPaths = group.querySelectorAll('path');
                     if (groupPaths.length > 0) {
-                        svgContent += '<g>';
-                        groupPaths.forEach(path => {
+                        groupPaths.forEach((path, index) => {
                             const pathData = path.getAttribute('android:pathData');
-                            const fillColor = path.getAttribute('android:fillColor') || '#000000';
+                            let fillColor = path.getAttribute('android:fillColor') || '#000000';
                             const strokeColor = path.getAttribute('android:strokeColor');
                             const strokeWidth = path.getAttribute('android:strokeWidth');
+                            const fillAlpha = path.getAttribute('android:fillAlpha') || '1';
+                            const strokeAlpha = path.getAttribute('android:strokeAlpha') || '1';
 
                             if (pathData) {
-                                svgContent += `<path d="${pathData}" fill="${fillColor}"`;
-                                if (strokeColor) {
-                                    svgContent += ` stroke="${strokeColor}"`;
+                                // 处理颜色值
+                                if (fillColor.startsWith('#')) {
+                                    // 已经是标准颜色格式
+                                } else if (fillColor.includes('@')) {
+                                    // Android 资源引用，使用默认黑色
+                                    fillColor = tint && !tint.includes('@') ? tint : '#000000';
+                                }
+
+                                svgContent += `<path d="${pathData}" fill="${fillColor}" fill-opacity="${fillAlpha}"`;
+                                if (strokeColor && !strokeColor.includes('@')) {
+                                    svgContent += ` stroke="${strokeColor}" stroke-opacity="${strokeAlpha}"`;
                                 }
                                 if (strokeWidth) {
                                     svgContent += ` stroke-width="${strokeWidth}"`;
                                 }
                                 svgContent += '></path>';
+                                hasContent = true;
                             }
                         });
-                        svgContent += '</g>';
                     }
+                    
+                    // 处理嵌套的 group 元素
+                    const nestedGroups = group.querySelectorAll('group');
+                    if (nestedGroups.length > 0) {
+                        console.log(`找到 ${nestedGroups.length} 个嵌套 group 元素`);
+                        // 递归处理嵌套组（简化处理）
+                        nestedGroups.forEach(nestedGroup => {
+                            const nestedPaths = nestedGroup.querySelectorAll('path');
+                            nestedPaths.forEach(path => {
+                                const pathData = path.getAttribute('android:pathData');
+                                let fillColor = path.getAttribute('android:fillColor') || '#000000';
+                                const strokeColor = path.getAttribute('android:strokeColor');
+                                const strokeWidth = path.getAttribute('android:strokeWidth');
+                                const fillAlpha = path.getAttribute('android:fillAlpha') || '1';
+                                const strokeAlpha = path.getAttribute('android:strokeAlpha') || '1';
+
+                                if (pathData) {
+                                    if (fillColor.includes('@')) {
+                                        fillColor = tint && !tint.includes('@') ? tint : '#000000';
+                                    }
+
+                                    svgContent += `<path d="${pathData}" fill="${fillColor}" fill-opacity="${fillAlpha}"`;
+                                    if (strokeColor && !strokeColor.includes('@')) {
+                                        svgContent += ` stroke="${strokeColor}" stroke-opacity="${strokeAlpha}"`;
+                                    }
+                                    if (strokeWidth) {
+                                        svgContent += ` stroke-width="${strokeWidth}"`;
+                                    }
+                                    svgContent += '></path>';
+                                    hasContent = true;
+                                }
+                            });
+                        });
+                    }
+                    
+                    svgContent += '</g>';
                 });
 
+                // 如果有全局着色，关闭包裹组
+                if (tint && !tint.includes('@')) {
+                    svgContent += '</g>';
+                }
+
                 svgContent += '</svg>';
+
+                if (!hasContent) {
+                    console.error('没有找到有效的路径数据');
+                    return null;
+                }
+
+                console.log('生成的 SVG:', svgContent.substring(0, 200) + '...');
                 return svgContent;
             } catch (error) {
                 console.error('Android Vector 转换错误:', error);
@@ -827,6 +930,7 @@
                 // 检查是否为 Android Vector Drawable XML
                 let processedSvgContent = svgContent;
                 if (svgContent.includes('<vector') || svgContent.includes('android:')) {
+                    console.log('检测到 Android Vector Drawable，开始转换为 SVG...');
                     processedSvgContent = convertAndroidVectorToSvg(svgContent);
                     if (!processedSvgContent) {
                         throw new Error('无法解析 Android Vector Drawable');
@@ -835,29 +939,73 @@
 
                 // 确保 SVG 内容格式正确
                 if (!processedSvgContent.includes('<svg')) {
+                    console.log('包装 SVG 片段...');
                     processedSvgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">${processedSvgContent}</svg>`;
                 }
 
+                // 创建一个 canvas 元素来渲染 SVG
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
-                canvas.width = 1024;
-                canvas.height = 1024;
-
+                
+                // 设置较高的分辨率以获得更好的质量
+                const scale = 4; // 缩放因子
+                canvas.width = 1024 * scale;
+                canvas.height = 1024 * scale;
+                
+                // 创建 SVG 图像
                 const img = new Image();
                 const svgBlob = new Blob([processedSvgContent], { type: 'image/svg+xml;charset=utf-8' });
                 const url = URL.createObjectURL(svgBlob);
 
                 return new Promise((resolve, reject) => {
                     img.onload = () => {
-                        // 设置白色背景
-                        ctx.fillStyle = 'white';
-                        ctx.fillRect(0, 0, 1024, 1024);
-                        ctx.drawImage(img, 0, 0, 1024, 1024);
-                        
-                        canvas.toBlob(blob => {
+                        try {
+                            // 设置白色背景
+                            ctx.fillStyle = 'white';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            
+                            // 绘制 SVG 图像
+                            ctx.save();
+                            ctx.scale(scale, scale);
+                            ctx.drawImage(img, 0, 0, 1024, 1024);
+                            ctx.restore();
+                            
+                            // 使用 jsPDF 创建 PDF
+                            const { jsPDF } = window.jspdf;
+                            const pdf = new jsPDF({
+                                orientation: 'portrait',
+                                unit: 'mm',
+                                format: 'a4'
+                            });
+                            
+                            // 计算 PDF 页面尺寸
+                            const pdfWidth = pdf.internal.pageSize.getWidth();
+                            const pdfHeight = pdf.internal.pageSize.getHeight();
+                            
+                            // 计算图像在 PDF 中的尺寸，保持正方形并居中
+                            const size = Math.min(pdfWidth, pdfHeight) * 0.8;
+                            const x = (pdfWidth - size) / 2;
+                            const y = (pdfHeight - size) / 2;
+                            
+                            // 将 canvas 转换为图像数据
+                            const imgData = canvas.toDataURL('image/png');
+                            
+                            // 将图像添加到 PDF
+                            pdf.addImage(imgData, 'PNG', x, y, size, size);
+                            
+                            // 生成 PDF blob
+                            const pdfBlob = pdf.output('blob');
+                            
+                            // 清理资源
                             URL.revokeObjectURL(url);
-                            resolve(blob);
-                        }, 'image/png'); // 简化版本，输出 PNG 而非真正的 PDF
+                            
+                            console.log('PDF 转换完成，文件大小:', pdfBlob.size, 'bytes');
+                            resolve(pdfBlob);
+                        } catch (error) {
+                            console.error('PDF 生成错误:', error);
+                            URL.revokeObjectURL(url);
+                            reject(new Error('PDF 生成失败: ' + error.message));
+                        }
                     };
 
                     img.onerror = (error) => {
@@ -870,7 +1018,7 @@
                 });
             } catch (error) {
                 console.error('PDF转换过程中出错:', error);
-                throw new Error('文件格式不支持或文件已损坏');
+                throw new Error('文件格式不支持或文件已损坏: ' + error.message);
             }
         }
 
